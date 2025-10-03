@@ -5,13 +5,14 @@ from feedgen.feed import FeedGenerator
 from pydantic import BaseModel
 
 # 配置
-WEWE_RSS_URL = "https://your-wewe-rss-url/all.json"
+WEWE_RSS_URL = os.getenv("WEWE_RSS_URL")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
 app = FastAPI()
 
 
+# 定义文章数据结构
 class Article(BaseModel):
     title: str
     link: str
@@ -28,7 +29,7 @@ async def call_deepseek(prompt: str) -> str:
             DEEPSEEK_API_URL,
             headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
             json={
-                "model": "deepseek-chat",
+                "model": "deepseek-chat",  # 模型名需和你的API权限匹配
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
             },
@@ -44,7 +45,7 @@ async def call_deepseek(prompt: str) -> str:
 # -------------------------------
 async def classify_article(article: Article) -> str:
     prompt = f"""
-请判断以下文章是否为“活动招募、讲座、报名”类型的通知，而不是商业推广或举办活动之后的宣传稿。
+请判断以下文章是否为“活动招募、讲座、报名”类型的通知，而不是商业推广。
 只回答 保留 或 丢弃。
 
 标题: {article.title}
@@ -65,14 +66,23 @@ async def summarize_article(article: Article) -> str:
 
 
 # -------------------------------
+# 根路由提示
+# -------------------------------
+@app.get("/")
+async def root():
+    return {"message": "Smart-RSS is running! Try /smart-rss.xml"}
+
+
+# -------------------------------
 # 获取 WeWe RSS -> 处理 -> 输出新RSS
 # -------------------------------
 @app.get("/smart-rss.xml")
 async def generate_smart_rss():
     async with httpx.AsyncClient() as client:
         resp = await client.get(WEWE_RSS_URL, timeout=60)
-        articles = resp.json()
+        feed = resp.json()
 
+    items = feed.get("items", [])
     fg = FeedGenerator()
     fg.title("Smart RSS (Powered by DeepSeek)")
     fg.link(href="http://example.com")
@@ -80,16 +90,16 @@ async def generate_smart_rss():
 
     filtered_articles = []
 
-    for a in articles:
+    for a in items:
         article = Article(
             title=a.get("title", ""),
-            link=a.get("link", ""),
-            content=a.get("content", ""),
-            source=a.get("source", "")
+            link=a.get("url", ""),  # JSON Feed 里是 url
+            content=a.get("content_html", ""),  # JSON Feed 里是 content_html
+            source=a.get("author", {}).get("name", "") if isinstance(a.get("author"), dict) else ""
         )
 
-        # 假设 "通知类" 来自特定公众号
-        if article.source in ["公众号A", "公众号B"]:
+        # 假设“通知类”文章通过关键词判断
+        if "通知" in article.title or "报名" in article.title or "讲座" in article.title:
             decision = await classify_article(article)
             if decision == "保留":
                 filtered_articles.append(article)
