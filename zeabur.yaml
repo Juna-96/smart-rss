@@ -1,0 +1,9 @@
+services:
+  - name: smart-rss
+    type: web
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 8080
+    ports:
+      - port: 8080
+        protocol: http
